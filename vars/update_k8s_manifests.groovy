@@ -1,7 +1,7 @@
 #!/usr/bin/env groovy
 
 /**
- * Update Kubernetes manifests with new image tags
+ * Update Kubernetes manifests with new image tags and push to GitHub.
  */
 def call(Map config = [:]) {
     def imageTag = config.imageTag ?: error("Image tag is required")
@@ -9,46 +9,39 @@ def call(Map config = [:]) {
     def gitCredentials = config.gitCredentials ?: 'github-credentials'
     def gitUserName = config.gitUserName ?: 'Jenkins CI'
     def gitUserEmail = config.gitUserEmail ?: 'jenkins@example.com'
-    
+    def gitRepoUrl = config.gitRepoUrl ?: 'https://github.com/oliversims/tws-e-commerce-app_hackathon.git'
+    def dockerImageName = config.dockerImageName ?: 'simsoliver/easyshop-app'
+    def dockerMigrationImageName = config.dockerMigrationImageName ?: 'simsoliver/easyshop-migration'
+
+    // github.com/owner/repo.git -> owner/repo
+    def gitRepoPath = gitRepoUrl
+        .replaceFirst('^https://github.com/', '')
+        .replaceFirst('\\.git$', '')
+
     echo "Updating Kubernetes manifests with image tag: ${imageTag}"
-    
+    echo "Pushing manifest changes to: ${gitRepoPath}"
+
     withCredentials([usernamePassword(
         credentialsId: gitCredentials,
         usernameVariable: 'GIT_USERNAME',
         passwordVariable: 'GIT_PASSWORD'
     )]) {
-        // Configure Git
         sh """
             git config user.name "${gitUserName}"
             git config user.email "${gitUserEmail}"
-        """
-        
-        // Update deployment manifests with new image tags - using proper Linux sed syntax
-        sh """
-            # Update main application deployment - note the correct image name is laxg66/easyshop-app
-            sed -i "s|image: simsoliver/easyshop-app:.*|image: laxg66/easyshop-app:${imageTag}|g" ${manifestsPath}/08-easyshop-deployment.yaml
-            
-            # Update migration job if it exists
+
+            sed -i "s|image: .*easyshop-app.*|image: ${dockerImageName}:${imageTag}|g" ${manifestsPath}/08-easyshop-deployment.yaml
+
             if [ -f "${manifestsPath}/12-migration-job.yaml" ]; then
-                sed -i "s|image: simsoliver/easyshop-migration:.*|image: laxg66/easyshop-migration:${imageTag}|g" ${manifestsPath}/12-migration-job.yaml
+                sed -i "s|image: .*easyshop-migration.*|image: ${dockerMigrationImageName}:${imageTag}|g" ${manifestsPath}/12-migration-job.yaml
             fi
-            
-            # Ensure ingress is using the correct domain
-            if [ -f "${manifestsPath}/10-ingress.yaml" ]; then
-                sed -i "s|host: .*|host: easyshop.letsdeployit.com|g" ${manifestsPath}/10-ingress.yaml
-            fi
-            
-            # Check for changes
+
             if git diff --quiet; then
                 echo "No changes to commit"
             else
-                # Commit and push changes
                 git add ${manifestsPath}/*.yaml
-                git commit -m "Update image tags to ${imageTag} and ensure correct domain [ci skip]"
-                
-                # Set up credentials for push
-                git remote set-url origin https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/lax66/tws-e-commerce-app_hackathon.git
-                git push origin HEAD:\${GIT_BRANCH}
+                git commit -m "Update image tags to ${imageTag} [ci skip]"
+                git push "https://\${GIT_USERNAME}:\${GIT_PASSWORD}@github.com/${gitRepoPath}.git" HEAD:\${GIT_BRANCH}
             fi
         """
     }
